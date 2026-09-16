@@ -1,0 +1,31 @@
+-- D01b - the victim is chosen by deadlock_timeout.   Section 7
+--
+-- deadlock_timeout is a PER-SESSION setting. When a session starts waiting for a lock it
+-- arms its timer; when the timer fires it looks for a cycle in the wait-for graph, and if
+-- it finds one it aborts ITSELF. So the victim is whoever runs the check.
+--
+-- First: psql -d b2 -f 00-setup.sql   (again before each case)
+
+-- ---------- Case A: T1 is the fast detector -> T1 dies ----------
+-- T1: SET deadlock_timeout = '200ms';  BEGIN;
+--     UPDATE accounts SET balance = balance - 100 WHERE id = 100;
+-- T2: SET deadlock_timeout = '10s';    BEGIN;
+--     UPDATE accounts SET balance = balance - 100 WHERE id = 200;
+-- T1: UPDATE accounts SET balance = balance + 100 WHERE id = 200;   -- waits
+-- T2: UPDATE accounts SET balance = balance + 100 WHERE id = 100;   -- type this at once
+--     ==> T1 dies after ~200 ms.   (5 runs out of 5)
+
+-- ---------- Case B: T2 is the fast detector -> T2 dies ----------
+-- Same flow, timeouts REVERSED: T1 '10s', T2 '200ms'.
+--     ==> T2 dies after ~200 ms.   (5 runs out of 5)
+
+-- ---------- Case C: the check runs TOO EARLY ----------
+-- T1: SET deadlock_timeout = '200ms';   T2: SET deadlock_timeout = '10s';
+-- T1 starts waiting. At 200 ms it runs its check - but there is NO cycle yet
+-- (T2 has not asked). T1 never checks again; each waiter looks exactly once.
+-- T2 asks at ~300 ms. The deadlock now exists, and nobody is looking.
+--     ==> The deadlock lives for 10 SECONDS, until T2's timer fires and T2 dies.
+--
+-- So "you cannot predict the victim" is correct advice with a missing explanation.
+-- The victim is not random: it is whoever runs the check while the cycle exists.
+-- And an aggressive deadlock_timeout can delay detection instead of speeding it up.

@@ -1,0 +1,22 @@
+-- D03 - ACCESS EXCLUSIVE is the ONLY mode that blocks a plain SELECT.   Section 2
+-- First: psql -d b2 -f 00-setup.sql
+
+-- ---------- Part 1: ordinary traffic does not block itself ----------
+-- T1: BEGIN;
+--     UPDATE accounts SET balance = balance + 1 WHERE id = 100;   -- ROW EXCLUSIVE
+-- T2: SELECT count(*) FROM accounts;                              -- does not wait
+-- T2: INSERT INTO accounts VALUES (300, 'Veli', 0);               -- does not wait
+-- T1: ROLLBACK;
+--
+-- ACCESS SHARE / ROW SHARE / ROW EXCLUSIVE do not conflict with each other, so
+-- SELECT, INSERT and UPDATE run in parallel at the table level.
+-- (Racing for the same ROW is a different mechanism - see D05.)
+
+-- ---------- Part 2: DDL blocks even a reader ----------
+-- T1: BEGIN;
+--     ALTER TABLE accounts ADD COLUMN note text;                  -- ACCESS EXCLUSIVE
+-- T2: SELECT count(*) FROM accounts;                              -- BLOCKED
+-- T1: ROLLBACK;                                                   -- T2 released
+--
+-- Observed: T2's plain SELECT blocked, and returned when T1 rolled back.
+-- This one line is the whole reason production migrations are dangerous.
